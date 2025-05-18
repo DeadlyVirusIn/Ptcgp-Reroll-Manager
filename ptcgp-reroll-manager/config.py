@@ -1,43 +1,43 @@
 ﻿import os
 
 # Your app Token, if you don't know it you can reset it here: https://discord.com/developers/applications > Your App > Bot > Reset Token
-token = "MTM2NDM2NTAxMTEzMjM1NDYzMg.GZyqgJ.Bew7HLT5rQ63TiT9A14tnFdl8ybzCe0OHIRjLY"
+token = ""
 # With Discord developer mode on, right-click your server and "Copy Server ID"
-guild_id = "1364368792964038780"
+guild_id = ""
 # For all channel_id below, right-click a channel in your Discord server and "Copy Server ID" with developer mode on
 # THE ID OF THE DISCORD CHANNEL - Where ID list and AutoKick alerts are sent
-channel_id_commands = "1364368793169563731"
+channel_id_commands = ""
 # THE ID OF THE DISCORD CHANNEL - Where statistics of users will be sent
-channel_id_user_stats = "1364368793324884040"
+channel_id_user_stats = ""
 # Pack specific forum channels - Each one must be a forum channel
-channel_id_mewtwo_verification_forum = "1365450565865443429"  # Add your Mewtwo channel ID here
-channel_id_charizard_verification_forum = "1365450662124716042"  # Add your Charizard channel ID here
-channel_id_pikachu_verification_forum = "1365450785181405276"  # Add your Pikachu channel ID here
-channel_id_mew_verification_forum = "1365476251770421331"  # Add your Mew channel ID here
-channel_id_dialga_verification_forum = "1365477571361374268"  # Add your Dialga channel ID here
-channel_id_palkia_verification_forum = "1365477406223241288"  # Add your Palkia channel ID here
-channel_id_arceus_verification_forum = "1365476883139137668"  # Add your Arceus channel ID here
-channel_id_shining_verification_forum = "1365477091813888182"  # Add your Shining channel ID here
-channel_id_solgaleo_verification_forum = "1367983351490940968"  # Solgaleo channel ID
-channel_id_lunala_verification_forum = "1367983425423806674"  # Lunala channel ID
+channel_id_mewtwo_verification_forum = ""  # Add your Mewtwo channel ID here
+channel_id_charizard_verification_forum = ""  # Add your Charizard channel ID here
+channel_id_pikachu_verification_forum = ""  # Add your Pikachu channel ID here
+channel_id_mew_verification_forum = ""  # Add your Mew channel ID here
+channel_id_dialga_verification_forum = ""  # Add your Dialga channel ID here
+channel_id_palkia_verification_forum = ""  # Add your Palkia channel ID here
+channel_id_arceus_verification_forum = ""  # Add your Arceus channel ID here
+channel_id_shining_verification_forum = ""  # Add your Shining channel ID here
+channel_id_solgaleo_verification_forum = ""  # Solgaleo channel ID
+channel_id_lunala_verification_forum = ""  # Lunala channel ID
 # THE ID OF THE DISCORD CHANNEL - Where Double 2 Star validation threads will be created ⚠️ IT MUST BE A FORUM CHANNEL, look for Discord community server for more info
-channel_id_2star_verification_forum = "1365092280427348039"
+channel_id_2star_verification_forum = ""
 # THE ID OF THE DISCORD CHANNEL - Where the Packs Webhooks is linked, better to be a separate channel from heartbeat webhook
-channel_id_webhook = "1364368793324884043"
+channel_id_webhook = ""
 # THE ID OF THE DISCORD CHANNEL - Where the Heartbeat Webhooks is linked, better to be a separate channel from packs webhook
-channel_id_heartbeat = "1364368793324884044"
+channel_id_heartbeat = ""
 # THE ID OF THE DISCORD CHANNEL - Where the AntiCheat pseudonyms are sent for analysis
-channel_id_anticheat = "1364759682140475452"
+channel_id_anticheat = ""
 # THE ID OF THE DISCORD CHANNEL - Where the GP tracking list will be posted
-channel_id_gp_tracking_list = "1366083692400869447"  # Update this to your desired channel ID
+channel_id_gp_tracking_list = ""  # Update this to your desired channel ID
 # Create a new fine-grained token for your GitHub account, and make sure to only check to read/write your Gists: https://github.com/settings/tokens
-git_token = "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"
+git_token = ""
 # Then, create a GitGist: https://gist.github.com/ and get its ID (the numbers in the URL).
-git_gist_id = "https://gist.githubusercontent.com/DeadlyVirusIn/d318f28b87df5eba61a3869186dd91a8/raw/902bb10907c16bf14b115f488ee8f510c00602be/DVServerIDFile"
+git_gist_id = ""
 # And the GitGist Name based on the name you gave it
-git_gist_group_name = "DVServerIDFile"
+git_gist_group_name = ""
 # And the GitGist Name based on the name you gave it
-git_gist_gp_name = "EligibleGPs"
+git_gist_gp_name = ""
 
 # =========================================== RULES ===========================================
 # Choose if you want the AntiCheat to be enabled or not, if yes then fill "channel_id_anticheat" above
