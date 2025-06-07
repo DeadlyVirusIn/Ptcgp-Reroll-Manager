@@ -4,11 +4,15 @@
 token = ""
 # With Discord developer mode on, right-click your server and "Copy Server ID"
 guild_id = ""
+
+# =========================================== CHANNEL IDs ===========================================
 # For all channel_id below, right-click a channel in your Discord server and "Copy Server ID" with developer mode on
+
 # THE ID OF THE DISCORD CHANNEL - Where ID list and AutoKick alerts are sent
 channel_id_commands = ""
 # THE ID OF THE DISCORD CHANNEL - Where statistics of users will be sent
 channel_id_user_stats = ""
+
 # Pack specific forum channels - Each one must be a forum channel
 channel_id_mewtwo_verification_forum = ""  # Add your Mewtwo channel ID here
 channel_id_charizard_verification_forum = ""  # Add your Charizard channel ID here
@@ -18,10 +22,13 @@ channel_id_dialga_verification_forum = ""  # Add your Dialga channel ID here
 channel_id_palkia_verification_forum = ""  # Add your Palkia channel ID here
 channel_id_arceus_verification_forum = ""  # Add your Arceus channel ID here
 channel_id_shining_verification_forum = ""  # Add your Shining channel ID here
-channel_id_solgaleo_verification_forum = ""  # Solgaleo channel ID
-channel_id_lunala_verification_forum = ""  # Lunala channel ID
-# THE ID OF THE DISCORD CHANNEL - Where Double 2 Star validation threads will be created ⚠️ IT MUST BE A FORUM CHANNEL, look for Discord community server for more info
+channel_id_solgaleo_verification_forum = ""  # Solgaleo channel ID - NEW
+channel_id_lunala_verification_forum = ""  # Lunala channel ID - NEW
+channel_id_buzzwole_verification_forum = ""  # Buzzwole channel ID - NEW
+
+# THE ID OF THE DISCORD CHANNEL - Where Double 2 Star validation threads will be created ⚠️ IT MUST BE A FORUM CHANNEL
 channel_id_2star_verification_forum = ""
+
 # THE ID OF THE DISCORD CHANNEL - Where the Packs Webhooks is linked, better to be a separate channel from heartbeat webhook
 channel_id_webhook = ""
 # THE ID OF THE DISCORD CHANNEL - Where the Heartbeat Webhooks is linked, better to be a separate channel from packs webhook
@@ -29,7 +36,11 @@ channel_id_heartbeat = ""
 # THE ID OF THE DISCORD CHANNEL - Where the AntiCheat pseudonyms are sent for analysis
 channel_id_anticheat = ""
 # THE ID OF THE DISCORD CHANNEL - Where the GP tracking list will be posted
-channel_id_gp_tracking_list = ""  # Update this to your desired channel ID
+channel_id_gp_tracking_list = ""
+# THE ID OF THE DISCORD CHANNEL - Where notifications for new GP/tradeable cards will be sent
+channel_id_notifications = ""  # You can use the same as channel_id_commands or create a new channel
+
+# =========================================== GITHUB/GIST SETTINGS ===========================================
 # Create a new fine-grained token for your GitHub account, and make sure to only check to read/write your Gists: https://github.com/settings/tokens
 git_token = ""
 # Then, create a GitGist: https://gist.github.com/ and get its ID (the numbers in the URL).
@@ -38,6 +49,16 @@ git_gist_id = ""
 git_gist_group_name = ""
 # And the GitGist Name based on the name you gave it
 git_gist_gp_name = ""
+
+# =========================================== THREAD CREATION SETTINGS ===========================================
+# Control whether threads are automatically created for different pack types
+create_threads_for_god_packs = True  # Set to False to disable thread creation for God Packs
+create_threads_for_tradeable_cards = True  # Set to False to disable thread creation for tradeable cards (Full Art, Rainbow, etc.)
+create_threads_for_double_stars = True  # Set to False to disable thread creation for Double 2-Star packs
+
+# If threads are disabled, you can still choose to log the findings to a specific channel
+log_pack_finds_to_channel = True  # Set to False to completely disable any pack find logging
+pack_finds_log_channel_id = ""  # Channel where pack finds will be logged if threads are disabled (can be same as webhook channel)
 
 # =========================================== RULES ===========================================
 # Choose if you want the AntiCheat to be enabled or not, if yes then fill "channel_id_anticheat" above
@@ -87,6 +108,19 @@ gp_tracking_update_interval = 30
 # Determine if updates should use cron schedule or interval-based updates
 # true = use node-schedule with cron, false = use setInterval
 gp_tracking_use_cron_schedule = True
+
+# NEW: Control what appears in the GP tracking list
+include_tradeable_cards_in_tracking = False  # Set to True to include tradeable cards in GP tracking list
+include_double_stars_in_tracking = True  # Set to True to include double star packs in GP tracking list
+include_god_packs_in_tracking = True  # Set to True to include actual God Packs in GP tracking list
+
+# Optional: Custom labels for different card types in tracking
+tradeable_card_tracking_label = "Special Cards"  # Label for tradeable cards section
+double_star_tracking_label = "Double Stars"  # Label for double star section  
+god_pack_tracking_label = "God Packs"  # Label for god pack section
+
+# Enable or disable notifications for new findings
+notifications_enabled = True  # Set to False to disable notifications
 
 # =========================================== ELIGIBLE IDs ===========================================
 # If some people in your group are running Min2Stars: 2 and some others 3, that flags all the GPs as 5/5 in the list to avoid auto removal bot from kicking 2/5 for those who are at Min2Stars: 3
@@ -164,6 +198,7 @@ tl_arceus_custom_emoji_name = "arceus"  # 💡 if not found, alternative: 🟨
 sr_giratina_custom_emoji_name = "lucario_shiny"  # ✨ if not found
 sm_solgaleo_custom_emoji_name = "solgaleo"  # ☀️ if not found
 sm_lunala_custom_emoji_name = "lunala"  # 🌙 if not found
+sv_buzzwole_custom_emoji_name = "buzzwole"  # 💪 if not found
 
 # =========================================== PATH CONFIGURATIONS ===========================================
 # Path configurations for data files

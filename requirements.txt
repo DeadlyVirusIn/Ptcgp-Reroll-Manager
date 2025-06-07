@@ -1,5 +1,6 @@
 discord.py>=2.0.0
-aiohttp>=3.8.0
-apscheduler>=3.9.0
-matplotlib>=3.5.0  # Add this line
-numpy>=1.20.0      # Also add this since matplotlib often uses numpy
+asyncio
+matplotlib
+numpy
+psutil
+python-dotenv

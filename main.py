@@ -1,494 +1,619 @@
 ﻿import discord
-from discord.ext import commands
+from discord.ext import commands, tasks
 import asyncio
-import logging
-import os
 import datetime
-import time
-import sqlite3
-import re
-from apscheduler.schedulers.asyncio import AsyncIOScheduler
+import os
+import sys
+import traceback
+from typing import Optional, List
 
-# Import configuration
+# Import configuration and utilities
 import config
-
-# Import utilities
-from utils import (
-    localize, format_number_to_k, format_minutes_to_days, sum_int_array, 
-    sum_float_array, round_to_one_decimal, round_to_two_decimals, 
-    count_digits, extract_numbers, extract_two_star_amount, is_numbers,
-    convert_min_to_ms, convert_ms_to_min, split_multi, replace_last_occurrence,
-    replace_miss_count, replace_miss_needed, send_received_message,
-    send_channel_message, bulk_delete_messages, color_text, add_text_bar,
-    format_number_with_spaces, get_random_string_from_array, get_oldest_message,
-    wait, replace_any_logo_with, normalize_ocr, get_lasts_anti_cheat_messages
-)
-
-# Import upload utilities
-from upload_utils import update_gist
-
-# Import miss messages
-from miss_sentences import (
-    get_low_tension_message, get_medium_tension_message, get_high_tension_message,
-    init_emojis, find_emoji
-)
-
-# Import GP test utilities
-from enhanced_gp_test_utils import (
-    add_miss, add_noshow, reset_test, get_test_summary, extract_godpack_id_from_message,
-    get_db_connection
-)
-
-# Import core utilities
 from core_utils import (
-    get_guild, get_member_by_id, get_pack_specific_channel, get_users_stats,
-    create_enhanced_stats_embed, get_enhanced_selected_packs_embed_text,
-    create_timeline_stats, send_stats, send_ids, update_gp_tracking_list,
-    update_inactive_gps, update_eligible_ids, mark_as_dead, set_user_state,
-    update_server_data, update_anti_cheat, update_user_data_gp_live,
-    add_user_data_gp_live, extract_gp_info, extract_double_star_info,
-    create_forum_post, send_status_header, inactivity_check, create_leaderboards,
-    check_file_exists_or_create, set_user_attrib_value, get_user_attrib_value,
-    get_active_users, get_all_users, get_active_ids
+    # Core functions
+    get_guild, get_member_by_id, get_active_users, get_all_users,
+    send_enhanced_stats, create_detailed_user_stats, create_timeline_stats_with_visualization,
+    create_user_activity_chart, generate_server_report, health_check,
+    
+    # User management
+    set_user_pack_preference, get_user_pack_preferences, does_user_profile_exists,
+    set_user_attrib_value, get_user_attrib_value, cleanup_inactive_users,
+    
+    # Data management
+    backup_user_data, restore_user_data, validate_user_data_integrity,
+    log_user_activity, emergency_shutdown,
+    
+    # Legacy compatibility
+    send_stats_legacy, get_channel_by_id
 )
 
-# Set up logging
-logging.basicConfig(
-    level=logging.INFO,
-    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
-    handlers=[
-        logging.FileHandler(filename='bot.log', encoding='utf-8', mode='a'),
-        logging.StreamHandler()
-    ]
+from utils import (
+    format_number_to_k, format_minutes_to_days, round_to_one_decimal,
+    send_channel_message, bulk_delete_messages
 )
-logger = logging.getLogger("bot")
 
-# Initialize data directory and files
-os.makedirs('data', exist_ok=True)
+from miss_sentences import find_emoji
 
-# Initialize data files
-check_file_exists_or_create(os.path.join('data', 'UserData.xml'), "Users")
-check_file_exists_or_create(os.path.join('data', 'ServerData.xml'), "root")
-
-# Initialize database
-db_path = os.path.join('data', 'gpp_test.db')
-conn = sqlite3.connect(db_path)
-conn.close()
-
-# Set up intents
+# Bot setup
 intents = discord.Intents.default()
-intents.messages = True
 intents.message_content = True
-intents.guilds = True
 intents.members = True
+intents.guilds = True
 
-# Create bot instance
-bot = commands.Bot(command_prefix='!', intents=intents)
+bot = commands.Bot(
+    command_prefix=config.command_prefix,
+    intents=intents,
+    help_command=None,  # Disable default help command
+    case_insensitive=True
+)
 
-# Global variables
-start_interval_time = time.time()
-
-async def backup_data_files():
-    """Back up the data files to prevent data loss."""
-    try:
-        # Get current timestamp
-        timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
-        
-        # Back up UserData.xml
-        if os.path.exists('data/UserData.xml'):
-            with open('data/UserData.xml', 'r', encoding='utf-8') as src:
-                with open(f'data/UserData_{timestamp}.xml.bak', 'w', encoding='utf-8') as dst:
-                    dst.write(src.read())
-                    
-        # Back up ServerData.xml
-        if os.path.exists('data/ServerData.xml'):
-            with open('data/ServerData.xml', 'r', encoding='utf-8') as src:
-                with open(f'data/ServerData_{timestamp}.xml.bak', 'w', encoding='utf-8') as dst:
-                    dst.write(src.read())
-                    
-        logger.info(f"Data files backed up with timestamp {timestamp}")
-    except Exception as e:
-        logger.error(f"Error backing up data files: {e}")
+# Global variables for tracking
+stats_task_running = False
+last_stats_time = None
 
 @bot.event
 async def on_ready():
-    """Handle bot startup and initialize scheduled tasks."""
-    logger.info(f'Bot logged in as {bot.user}')
+    """Bot startup event."""
+    print(f'✅ {bot.user.name} has connected to Discord!')
+    print(f'🔗 Bot ID: {bot.user.id}')
+    print(f'🌐 Connected to {len(bot.guilds)} guild(s)')
     
-    # Initialize scheduler
-    scheduler = AsyncIOScheduler()
+    # Start background tasks
+    if not stats_sender.is_running():
+        stats_sender.start()
+        print('📊 Stats sender task started')
     
-    # Setup scheduled tasks
-    if config.reset_server_data_frequently:
-        scheduler.add_job(update_server_data, 'interval', 
-                         minutes=config.reset_server_data_time,
-                         args=[bot])
+    if not user_cleanup.is_running():
+        user_cleanup.start()
+        print('🧹 User cleanup task started')
     
-    # Add other scheduled tasks
-    scheduler.add_job(update_inactive_gps, 'interval', 
-                     hours=1, args=[bot])
-    
-    scheduler.add_job(update_eligible_ids, 'interval', 
-                     hours=6, args=[bot])
-    
-    scheduler.add_job(send_status_header, 'interval', 
-                     hours=12, args=[bot])
-    
-    # Add backup job (once a day)
-    scheduler.add_job(backup_data_files, 'cron', hour=3, minute=0)  # Run at 3:00 AM
-    
-    if config.auto_kick:
-        scheduler.add_job(inactivity_check, 'interval', 
-                         minutes=config.refresh_interval,
-                         args=[bot])
-    
-    if config.anti_cheat:
-        scheduler.add_job(update_anti_cheat, 'interval', 
-                         minutes=config.anti_cheat_rate,
-                         args=[bot])
-    
-    # Updates stats every X minutes
-    scheduler.add_job(send_stats, 'interval', 
-                     minutes=config.refresh_interval,
-                     args=[bot])
-    
-    # Update GP tracking list
-    scheduler.add_job(update_gp_tracking_list, 'interval', 
-                     minutes=config.gp_tracking_update_interval,
-                     args=[bot])
-    
-    # Start the scheduler
-    scheduler.start()
-    
-    # Initialize emojis
-    init_emojis(bot)
-    
-    # Initial server data update
-    await update_server_data(bot, startup=True)
-    
-    # Initial setup for UI elements
-    await send_status_header(bot)
-    
-    logger.info("Bot initialization complete")
+    # Perform health check on startup
+    health_status = await health_check()
+    print(f'🏥 Health check: {sum(health_status.values())}/{len(health_status)} systems OK')
 
-@bot.command()
-async def ping(ctx):
-    await ctx.send("pong")
-
-@bot.command(name="setplayerid", description="Set your player ID")
-async def set_player_id(ctx, player_id: str):
-    """Set user's player ID."""
-    if not player_id.isdigit():
-        await ctx.reply("Player ID must contain only numbers.")
-        return
-        
-    await set_user_attrib_value(str(ctx.author.id), ctx.author.name, 'pocket_id', player_id)
-    await ctx.reply(f"Your player ID has been set to: {player_id}")
-
-@bot.command(name="setaverageinstances", description="Set your average number of instances")
-async def set_average_instances(ctx, average_instances: int):
-    """Set user's average instances."""
-    if average_instances <= 0:
-        await ctx.reply("Average instances must be greater than 0.")
-        return
-        
-    await set_user_attrib_value(str(ctx.author.id), ctx.author.name, 'average_instances', average_instances)
-    await ctx.reply(f"Your average instances has been set to: {average_instances}")
-
-@bot.command(name="setprefix", description="Set your username prefix")
-async def set_prefix(ctx, prefix: str):
-    """Set user's prefix for reroll usernames."""
-    await set_user_attrib_value(str(ctx.author.id), ctx.author.name, 'prefix', prefix)
-    await ctx.reply(f"Your username prefix has been set to: {prefix}")
-
-@bot.command(name="active", description="Set yourself as active")
-async def active(ctx):
-    """Set user as active."""
-    await set_user_state(bot, ctx.author, "active", ctx)
-
-@bot.command(name="inactive", description="Set yourself as inactive")
-async def inactive(ctx):
-    """Set user as inactive."""
-    await set_user_state(bot, ctx.author, "inactive", ctx)
-
-@bot.command(name="farm", description="Set yourself as a farmer (no main instance)")
-async def farm(ctx):
-    """Set user as farmer."""
-    await set_user_state(bot, ctx.author, "farm", ctx)
-
-@bot.command(name="leech", description="Set yourself as a leecher (only main instance)")
-async def leech(ctx):
-    """Set user as leecher."""
-    await set_user_state(bot, ctx.author, "leech", ctx)
-
-@bot.command(name="refresh", description="Refresh stats")
-async def refresh(ctx):
-    """Refresh stats display."""
-    await send_stats(bot)
-    await ctx.reply("Stats refreshed!")
-
-@bot.command(name="forcerefresh", description="Force refresh the IDs list")
-@commands.has_permissions(administrator=True)
-async def force_refresh(ctx):
-    """Force refresh the IDs list."""
-    await send_ids(bot)
-    await ctx.reply("IDs list refreshed!")
-
-@bot.command(name="miss", description="Report a miss test")
-async def miss_command(ctx):
-    """Report a miss test for a godpack."""
-    # Get thread ID and check if we're in a thread
-    if not isinstance(ctx.channel, discord.Thread):
-        await ctx.reply("This command can only be used in a godpack verification thread.")
-        return
-        
-    # Get godpack ID
-    godpack_id = extract_godpack_id_from_message(await get_oldest_message(ctx.channel))
-    if not godpack_id:
-        await ctx.reply("Could not find godpack ID in this thread.")
-        return
-    
-    # Add miss test
-    chance = await add_miss(str(ctx.guild.id), godpack_id, str(ctx.author.id))
-    
-    # Get miss message based on chance
-    message = ""
-    if chance < 33:
-        message = get_high_tension_message()
-    elif chance < 66:
-        message = get_medium_tension_message()
+@bot.event
+async def on_command_error(ctx, error):
+    """Global error handler for commands."""
+    if isinstance(error, commands.CommandNotFound):
+        await ctx.reply("❌ Command not found. Use `!help` to see available commands.")
+    elif isinstance(error, commands.MissingPermissions):
+        await ctx.reply("❌ You don't have permission to use this command.")
+    elif isinstance(error, commands.BadArgument):
+        await ctx.reply("❌ Invalid argument provided. Please check the command syntax.")
+    elif isinstance(error, commands.MissingRequiredArgument):
+        await ctx.reply(f"❌ Missing required argument: {error.param}")
     else:
-        message = get_low_tension_message()
-    
-    await ctx.reply(message)
+        print(f"❌ Unexpected error in command {ctx.command}: {error}")
+        traceback.print_exception(type(error), error, error.__traceback__)
+        await ctx.reply("❌ An unexpected error occurred. Please try again.")
 
-@bot.command(name="noshow", description="Report a test without showing the godpack")
-async def noshow_command(ctx, open_slots: int, number_friends: int):
-    """Report a noshow test for a godpack."""
-    # Get thread ID and check if we're in a thread
-    if not isinstance(ctx.channel, discord.Thread):
-        await ctx.reply("This command can only be used in a godpack verification thread.")
-        return
-        
-    # Get godpack ID
-    godpack_id = extract_godpack_id_from_message(await get_oldest_message(ctx.channel))
-    if not godpack_id:
-        await ctx.reply("Could not find godpack ID in this thread.")
+# BACKGROUND TASKS
+@tasks.loop(minutes=config.stats_interval_minutes)
+async def stats_sender():
+    """Background task to send statistics periodically."""
+    global stats_task_running, last_stats_time
+    
+    if stats_task_running:
+        print("⚠️ Stats task already running, skipping...")
         return
     
-    # Add noshow test
-    chance = await add_noshow(str(ctx.guild.id), godpack_id, str(ctx.author.id), open_slots, number_friends)
-    
-    # Get miss message based on chance
-    message = ""
-    if chance < 33:
-        message = get_high_tension_message()
-    elif chance < 66:
-        message = get_medium_tension_message()
-    else:
-        message = get_low_tension_message()
-    
-    await ctx.reply(message)
+    try:
+        stats_task_running = True
+        await send_enhanced_stats(bot, manual_trigger=False)
+        last_stats_time = datetime.datetime.now()
+        print(f"✅ Automated stats sent at {last_stats_time.strftime('%H:%M:%S')}")
+    except Exception as e:
+        print(f"❌ Error in stats sender task: {e}")
+    finally:
+        stats_task_running = False
 
-@bot.command(name="resettest", description="Reset tests for a specific godpack")
-async def reset_test_command(ctx):
-    """Reset tests for a godpack."""
-    # Get thread ID and check if we're in a thread
-    if not isinstance(ctx.channel, discord.Thread):
-        await ctx.reply("This command can only be used in a godpack verification thread.")
-        return
-        
-    # Get godpack ID
-    godpack_id = extract_godpack_id_from_message(await get_oldest_message(ctx.channel))
-    if not godpack_id:
-        await ctx.reply("Could not find godpack ID in this thread.")
-        return
-    
-    # Reset tests
-    chance = await reset_test(str(ctx.guild.id), godpack_id, str(ctx.author.id))
-    
-    await ctx.reply(f"Your tests for this godpack have been reset. Current probability: {chance:.1f}%")
+@tasks.loop(hours=24)  # Run daily
+async def user_cleanup():
+    """Background task to clean up inactive users."""
+    try:
+        await cleanup_inactive_users()
+        print("✅ Daily user cleanup completed")
+    except Exception as e:
+        print(f"❌ Error in user cleanup task: {e}")
 
-@bot.command(name="testsummary", description="Display a summary of tests for a godpack")
-async def test_summary_command(ctx):
-    """Display a summary of tests for a godpack."""
-    # Get thread ID and check if we're in a thread
-    if not isinstance(ctx.channel, discord.Thread):
-        await ctx.reply("This command can only be used in a godpack verification thread.")
-        return
-        
-    # Get godpack ID
-    godpack_id = extract_godpack_id_from_message(await get_oldest_message(ctx.channel))
-    if not godpack_id:
-        await ctx.reply("Could not find godpack ID in this thread.")
-        return
-    
-    # Get test summary
-    summary = await get_test_summary(str(ctx.guild.id), godpack_id)
-    
-    await ctx.reply(summary)
+@tasks.loop(hours=6)  # Run every 6 hours
+async def data_backup():
+    """Background task to backup user data."""
+    try:
+        success = await backup_user_data()
+        if success:
+            print("✅ Automated data backup completed")
+    except Exception as e:
+        print(f"❌ Error in data backup task: {e}")
 
-@bot.command(name="verified", description="Mark a GP as verified")
-async def verified_command(ctx):
-    """Mark a godpack as verified."""
-    # Get thread ID and check if we're in a thread
-    if not isinstance(ctx.channel, discord.Thread):
-        await ctx.reply("This command can only be used in a godpack verification thread.")
-        return
+# BASIC COMMANDS
+@bot.command(name="help", description="Show available commands")
+async def help_command(ctx):
+    """Display help information."""
+    embed = discord.Embed(
+        title="🤖 Bot Commands",
+        description="Available commands for the reroll management bot",
+        color=0x3498db
+    )
     
-    # Change thread name
-    new_thread_name = replace_any_logo_with(ctx.channel.name, config.text_verified_logo)
-    await ctx.channel.edit(name=new_thread_name)
+    # Basic commands
+    embed.add_field(
+        name="📊 Statistics Commands",
+        value="`!stats` - Show current statistics\n"
+              "`!mystats` - Show your detailed statistics\n"
+              "`!timeline [days]` - Show activity timeline\n"
+              "`!report [days]` - Generate server report",
+        inline=False
+    )
     
-    text_verified = localize("Godpack marqué comme vérifié!", "Godpack marked as verified!")
-    await ctx.reply(f"{config.text_verified_logo} {text_verified}")
+    # User commands
+    embed.add_field(
+        name="👤 User Commands",
+        value="`!setpack <pack_name>` - Set preferred pack\n"
+              "`!mypack` - Show your pack preferences\n"
+              "`!activity [user]` - Show user activity chart",
+        inline=False
+    )
     
-    # Update eligible IDs and GP tracking
-    await update_eligible_ids(bot)
-    await update_gp_tracking_list(bot)
+    # Admin commands (only show if user has permissions)
+    if ctx.author.guild_permissions.administrator or any(role.id in config.admin_role_ids for role in ctx.author.roles):
+        embed.add_field(
+            name="🔧 Admin Commands",
+            value="`!forcestats` - Force send statistics\n"
+                  "`!cleanup` - Clean up inactive users\n"
+                  "`!backup` - Create data backup\n"
+                  "`!health` - System health check\n"
+                  "`!emergency` - Emergency shutdown",
+            inline=False
+        )
+    
+    embed.set_footer(text=f"Prefix: {config.command_prefix} | Use {config.command_prefix}command for detailed help")
+    await ctx.reply(embed=embed)
 
-@bot.command(name="dead", description="Mark a GP as dead/invalid")
-async def dead_command(ctx):
-    """Mark a godpack as dead."""
-    await mark_as_dead(bot, ctx)
+@bot.command(name="stats", description="Display current server statistics")
+async def stats_command(ctx):
+    """Manual stats command."""
+    try:
+        await send_enhanced_stats(bot, manual_trigger=True)
+        await ctx.reply("✅ Statistics sent!")
+    except Exception as e:
+        print(f"❌ Error in stats command: {e}")
+        await ctx.reply("❌ Failed to send statistics.")
 
-@bot.command(name="liked", description="Mark a GP as liked")
-async def liked_command(ctx):
-    """Mark a godpack as liked."""
-    # Get thread ID and check if we're in a thread
-    if not isinstance(ctx.channel, discord.Thread):
-        await ctx.reply("This command can only be used in a godpack verification thread.")
-        return
-    
-    # Change thread name
-    new_thread_name = replace_any_logo_with(ctx.channel.name, config.text_liked_logo)
-    await ctx.channel.edit(name=new_thread_name)
-    
-    text_liked = localize("Godpack marqué comme aimé!", "Godpack marked as liked!")
-    await ctx.reply(f"{config.text_liked_logo} {text_liked}")
-    
-    # Update eligible IDs and GP tracking
-    await update_eligible_ids(bot)
-    await update_gp_tracking_list(bot)
+@bot.command(name="mystats", description="Show your detailed statistics")
+async def my_stats_command(ctx):
+    """Show detailed statistics for the command user."""
+    try:
+        user_embed = await create_detailed_user_stats(bot, str(ctx.author.id))
+        if user_embed:
+            await ctx.reply(embed=user_embed)
+        else:
+            await ctx.reply("❌ No statistics found for your account. Start rerolling to generate data!")
+    except Exception as e:
+        print(f"❌ Error in mystats command: {e}")
+        await ctx.reply("❌ Failed to retrieve your statistics.")
 
-@bot.command(name="notliked", description="Mark a GP as not liked")
-async def not_liked_command(ctx):
-    """Mark a godpack as not liked."""
-    # Get thread ID and check if we're in a thread
-    if not isinstance(ctx.channel, discord.Thread):
-        await ctx.reply("This command can only be used in a godpack verification thread.")
-        return
-    
-    # Change thread name
-    new_thread_name = replace_any_logo_with(ctx.channel.name, config.text_not_liked_logo)
-    await ctx.channel.edit(name=new_thread_name)
-    
-    text_not_liked = localize("Godpack marqué comme pas aimé!", "Godpack marked as not liked!")
-    await ctx.reply(f"{config.text_not_liked_logo} {text_not_liked}")
-    
-    # Update eligible IDs and GP tracking
-    await update_eligible_ids(bot)
-    await update_gp_tracking_list(bot)
-
-@bot.command(name="timelinestats", description="Display activity statistics over time")
+@bot.command(name="timeline", aliases=["timelinestats"], description="Display activity timeline")
 async def timeline_stats_command(ctx, days: int = 7):
-    """Display timeline statistics."""
+    """Display enhanced timeline statistics."""
     # Limit days to reasonable range
     days = max(1, min(days, 30))
     
-    # Generate timeline stats
-    timeline_embed = await create_timeline_stats(bot, days)
+    try:
+        timeline_embed = await create_timeline_stats_with_visualization(bot, days)
+        await ctx.reply(embed=timeline_embed)
+    except Exception as e:
+        print(f"❌ Error generating timeline stats: {e}")
+        await ctx.reply("❌ Failed to generate timeline statistics.")
+
+@bot.command(name="report", description="Generate comprehensive server report")
+async def server_report_command(ctx, days: int = 30):
+    """Generate a comprehensive server activity report."""
+    # Limit days to reasonable range
+    days = max(1, min(days, 90))
     
-    await ctx.reply(embed=timeline_embed)
+    try:
+        report_embed = await generate_server_report(bot, days)
+        if report_embed:
+            await ctx.reply(embed=report_embed)
+        else:
+            await ctx.reply("❌ Failed to generate server report.")
+    except Exception as e:
+        print(f"❌ Error generating server report: {e}")
+        await ctx.reply("❌ Failed to generate server report.")
 
-@bot.command(name="refreshgplist", description="Refresh the GP tracking list")
-async def refresh_gp_list_command(ctx):
-    """Refresh the GP tracking list."""
-    await update_gp_tracking_list(bot)
-    await ctx.reply("GP tracking list refreshed!")
-
-@bot.command(name="addgpfound", description="Add a GP to a user's stats (admin only)")
-@commands.has_permissions(administrator=True)
-async def add_gp_found_command(ctx, member: discord.Member):
-    """Add a godpack to a user's found count."""
-    gp_count = int(await get_user_attrib_value(str(member.id), 'god_pack_found', 0))
-    await set_user_attrib_value(str(member.id), member.name, 'god_pack_found', gp_count + 1)
+# PACK PREFERENCE COMMANDS
+@bot.command(name="setpack", description="Set your preferred pack for filtering")
+async def set_pack_command(ctx, *, pack_name: str = None):
+    """Set user's preferred pack."""
+    if not config.enable_role_based_filters:
+        await ctx.reply("❌ Pack filtering is not enabled on this server.")
+        return
     
-    await ctx.reply(f"Added 1 godpack to {member.mention}'s stats. New total: {gp_count + 1}")
-
-@bot.command(name="removegpfound", description="Remove a GP from a user's stats (admin only)")
-@commands.has_permissions(administrator=True)
-async def remove_gp_found_command(ctx, member: discord.Member):
-    """Remove a godpack from a user's found count."""
-    gp_count = int(await get_user_attrib_value(str(member.id), 'god_pack_found', 0))
-    if gp_count > 0:
-        await set_user_attrib_value(str(member.id), member.name, 'god_pack_found', gp_count - 1)
-        await ctx.reply(f"Removed 1 godpack from {member.mention}'s stats. New total: {gp_count - 1}")
-    else:
-        await ctx.reply(f"{member.mention} has no godpacks to remove.")
-
-# Button interaction handler
-@bot.event
-async def on_interaction(interaction):
-    if interaction.type == discord.InteractionType.component:
-        custom_id = interaction.data.get("custom_id", "")
+    if not pack_name:
+        # Show available packs
+        available_packs = list(config.pack_filters.keys())
+        pack_list = '\n'.join([f"• {pack}" for pack in available_packs])
         
-        if custom_id in ["active", "inactive", "farm", "leech"]:
-            await interaction.response.defer(ephemeral=True)
-            await set_user_state(bot, interaction.user, custom_id, interaction)
-        elif custom_id == "refreshUserStats":
-            await interaction.response.defer(ephemeral=True)
-            await send_stats(bot)
-            await interaction.followup.send("Stats refreshed!", ephemeral=True)
-
-# Message handler for godpack detection
-@bot.event
-async def on_message(message):
-    # Process commands first
-    await bot.process_commands(message)
-    
-    # Skip if not in webhook channel
-    if message.channel.id != int(config.channel_id_webhook):
+        embed = discord.Embed(
+            title="📦 Available Packs",
+            description=f"Use `!setpack <pack_name>` to set your preference.\n\n**Available packs:**\n{pack_list}\n\nUse `!setpack none` to disable filtering.",
+            color=0x9c59d1
+        )
+        await ctx.reply(embed=embed)
         return
     
-    # Skip if not from webhook or doesn't have attachments
-    if not message.webhook_id or not message.attachments:
+    # Handle disabling pack preference
+    if pack_name.lower() in ['none', 'disable', 'off']:
+        success = await set_user_pack_preference(str(ctx.author.id), ctx.author.display_name, '')
+        if success:
+            await ctx.reply("✅ Pack filtering disabled. You'll now see all pack types.")
+        else:
+            await ctx.reply("❌ Failed to update pack preference.")
         return
     
-    # Check if it's a godpack message
-    if "godpack" in message.content.lower():
-        gp_info = extract_gp_info(message)
-        channel_id = await get_pack_specific_channel(gp_info["pack_booster_type"])
-        await create_forum_post(
-            bot, message, channel_id, "GodPack", 
-            f"{gp_info['account_name']} [{gp_info['pack_amount']}P][{gp_info['two_star_ratio']}/5]", 
-            gp_info["owner_id"], gp_info["account_id"], 
-            gp_info["pack_amount"], gp_info["pack_booster_type"]
-        )
+    # Set specific pack preference
+    if pack_name not in config.pack_filters:
+        await ctx.reply(f"❌ Pack '{pack_name}' not found. Use `!setpack` to see available packs.")
+        return
     
-    # Handle double star
-    elif "double star" in message.content.lower():
-        ds_info = extract_double_star_info(message)
-        await create_forum_post(
-            bot, message, config.channel_id_2star_verification_forum,
-            "DoubleStar", ds_info["account_name"], 
-            ds_info["owner_id"], ds_info["account_id"], 
-            ds_info["pack_amount"]
-        )
-
-# Error handler
-@bot.event
-async def on_command_error(ctx, error):
-    if isinstance(error, commands.MissingPermissions):
-        await ctx.reply("You don't have permission to use this command.")
-    elif isinstance(error, commands.MissingRequiredArgument):
-        await ctx.reply(f"Missing required argument: {error.param.name}")
-    elif isinstance(error, commands.BadArgument):
-        await ctx.reply(f"Invalid argument provided: {error}")
+    success = await set_user_pack_preference(str(ctx.author.id), ctx.author.display_name, pack_name)
+    if success:
+        await ctx.reply(f"✅ Pack preference set to **{pack_name}**. Your rerolling will now focus on this pack type.")
+        await log_user_activity(str(ctx.author.id), ctx.author.display_name, "pack_preference_changed", pack_name)
     else:
-        logger.error(f"Command error: {error}")
-        await ctx.reply(f"An error occurred: {error}")
+        await ctx.reply("❌ Failed to update pack preference.")
 
-# Run the bot
+@bot.command(name="mypack", aliases=["packinfo"], description="Show your pack preferences")
+async def my_pack_command(ctx):
+    """Show user's pack preferences and statistics."""
+    try:
+        pack_prefs = await get_user_pack_preferences(str(ctx.author.id))
+        
+        embed = discord.Embed(
+            title=f"📦 Pack Preferences - {ctx.author.display_name}",
+            color=0x9c59d1
+        )
+        
+        if not config.enable_role_based_filters:
+            embed.description = "Pack filtering is not enabled on this server."
+            await ctx.reply(embed=embed)
+            return
+        
+        selected_pack = pack_prefs.get('selected_pack', '')
+        filter_enabled = pack_prefs.get('filter_enabled', True)
+        
+        if selected_pack:
+            embed.add_field(
+                name="🎯 Current Preference",
+                value=f"**{selected_pack}**",
+                inline=True
+            )
+        else:
+            embed.add_field(
+                name="🎯 Current Preference",
+                value="None (all packs)",
+                inline=True
+            )
+        
+        embed.add_field(
+            name="🔄 Filter Status",
+            value="✅ Enabled" if filter_enabled else "❌ Disabled",
+            inline=True
+        )
+        
+        # Show pack statistics
+        pack_stats = pack_prefs.get('pack_statistics', {})
+        if pack_stats:
+            stats_text = ""
+            for pack_name, count in pack_stats.items():
+                if count > 0:
+                    stats_text += f"**{pack_name}:** {format_number_to_k(count)} packs\n"
+            
+            if stats_text:
+                embed.add_field(
+                    name="📊 Pack Statistics",
+                    value=stats_text,
+                    inline=False
+                )
+        
+        embed.set_footer(text="Use !setpack <pack_name> to change your preference")
+        await ctx.reply(embed=embed)
+        
+    except Exception as e:
+        print(f"❌ Error in mypack command: {e}")
+        await ctx.reply("❌ Failed to retrieve pack preferences.")
+
+@bot.command(name="activity", description="Show user activity chart")
+async def activity_chart_command(ctx, user: discord.Member = None, days: int = 7):
+    """Generate an activity chart for a user."""
+    target_user = user or ctx.author
+    days = max(1, min(days, 30))  # Limit to 1-30 days
+    
+    try:
+        chart_buffer = await create_user_activity_chart(str(target_user.id), days)
+        
+        if chart_buffer:
+            file = discord.File(chart_buffer, filename=f"activity_{target_user.display_name}_{days}d.png")
+            embed = discord.Embed(
+                title=f"📈 Activity Chart - {target_user.display_name}",
+                description=f"Activity over the last {days} days",
+                color=0x3498db
+            )
+            embed.set_image(url=f"attachment://activity_{target_user.display_name}_{days}d.png")
+            await ctx.reply(file=file, embed=embed)
+        else:
+            await ctx.reply("❌ Failed to generate activity chart. User may not have enough data.")
+            
+    except Exception as e:
+        print(f"❌ Error generating activity chart: {e}")
+        await ctx.reply("❌ Failed to generate activity chart.")
+
+# ADMIN COMMANDS
+@bot.command(name="forcestats", description="Force send statistics (Admin only)")
+@commands.has_permissions(administrator=True)
+async def force_stats_command(ctx):
+    """Force send statistics manually."""
+    try:
+        await send_enhanced_stats(bot, manual_trigger=True)
+        await ctx.reply("✅ Statistics forcefully sent!")
+        await log_user_activity(str(ctx.author.id), ctx.author.display_name, "force_stats")
+    except Exception as e:
+        print(f"❌ Error in forcestats command: {e}")
+        await ctx.reply("❌ Failed to send statistics.")
+
+@bot.command(name="cleanup", description="Clean up inactive users (Admin only)")
+@commands.has_permissions(administrator=True)
+async def cleanup_command(ctx):
+    """Manually trigger user cleanup."""
+    try:
+        await cleanup_inactive_users()
+        await ctx.reply("✅ Inactive user cleanup completed!")
+        await log_user_activity(str(ctx.author.id), ctx.author.display_name, "manual_cleanup")
+    except Exception as e:
+        print(f"❌ Error in cleanup command: {e}")
+        await ctx.reply("❌ Failed to clean up inactive users.")
+
+@bot.command(name="backup", description="Create data backup (Admin only)")
+@commands.has_permissions(administrator=True)
+async def backup_command(ctx):
+    """Manually trigger data backup."""
+    try:
+        success = await backup_user_data()
+        if success:
+            await ctx.reply("✅ Data backup created successfully!")
+            await log_user_activity(str(ctx.author.id), ctx.author.display_name, "manual_backup")
+        else:
+            await ctx.reply("❌ Failed to create data backup.")
+    except Exception as e:
+        print(f"❌ Error in backup command: {e}")
+        await ctx.reply("❌ Failed to create data backup.")
+
+@bot.command(name="health", description="System health check (Admin only)")
+@commands.has_permissions(administrator=True)
+async def health_command(ctx):
+    """Perform system health check."""
+    try:
+        health_status = await health_check()
+        
+        embed = discord.Embed(
+            title="🏥 System Health Check",
+            color=0x2ecc71 if all(health_status.values()) else 0xe74c3c
+        )
+        
+        for component, status in health_status.items():
+            status_emoji = "✅" if status else "❌"
+            component_name = component.replace('_', ' ').title()
+            embed.add_field(
+                name=f"{status_emoji} {component_name}",
+                value="OK" if status else "FAILED",
+                inline=True
+            )
+        
+        overall_status = sum(health_status.values())
+        total_components = len(health_status)
+        
+        embed.set_footer(text=f"Overall Status: {overall_status}/{total_components} components healthy")
+        
+        await ctx.reply(embed=embed)
+        
+    except Exception as e:
+        print(f"❌ Error in health command: {e}")
+        await ctx.reply("❌ Failed to perform health check.")
+
+@bot.command(name="emergency", description="Emergency shutdown (Admin only)")
+@commands.has_permissions(administrator=True)
+async def emergency_command(ctx, *, reason: str = "Manual emergency shutdown"):
+    """Trigger emergency shutdown procedures."""
+    try:
+        # Confirm with user
+        confirm_embed = discord.Embed(
+            title="🚨 Emergency Shutdown Confirmation",
+            description=f"**Reason:** {reason}\n\nThis will:\n• Backup all data\n• Set all users to inactive\n• Save emergency IDs file\n\nReact with ✅ to confirm or ❌ to cancel.",
+            color=0xe74c3c
+        )
+        
+        message = await ctx.reply(embed=confirm_embed)
+        await message.add_reaction("✅")
+        await message.add_reaction("❌")
+        
+        def check(reaction, user):
+            return user == ctx.author and str(reaction.emoji) in ["✅", "❌"] and reaction.message.id == message.id
+        
+        try:
+            reaction, user = await bot.wait_for('reaction_add', timeout=30.0, check=check)
+            
+            if str(reaction.emoji) == "✅":
+                await emergency_shutdown(bot, reason)
+                await ctx.followup.send("🚨 Emergency shutdown procedures completed!")
+                await log_user_activity(str(ctx.author.id), ctx.author.display_name, "emergency_shutdown", reason)
+            else:
+                await ctx.followup.send("❌ Emergency shutdown cancelled.")
+                
+        except asyncio.TimeoutError:
+            await ctx.followup.send("❌ Emergency shutdown confirmation timed out.")
+            
+    except Exception as e:
+        print(f"❌ Error in emergency command: {e}")
+        await ctx.reply("❌ Failed to initiate emergency procedures.")
+
+@bot.command(name="validate", description="Validate data integrity (Admin only)")
+@commands.has_permissions(administrator=True)
+async def validate_command(ctx):
+    """Validate user data integrity."""
+    try:
+        is_valid = validate_user_data_integrity()
+        
+        if is_valid:
+            await ctx.reply("✅ User data integrity check passed!")
+        else:
+            await ctx.reply("❌ User data integrity check failed! Check logs for details.")
+            
+        await log_user_activity(str(ctx.author.id), ctx.author.display_name, "data_validation")
+        
+    except Exception as e:
+        print(f"❌ Error in validate command: {e}")
+        await ctx.reply("❌ Failed to validate data integrity.")
+
+# USER INFO COMMANDS
+@bot.command(name="userstats", description="Show detailed stats for a specific user")
+async def user_stats_command(ctx, user: discord.Member = None):
+    """Show detailed statistics for a specific user."""
+    target_user = user or ctx.author
+    
+    try:
+        user_embed = await create_detailed_user_stats(bot, str(target_user.id))
+        if user_embed:
+            await ctx.reply(embed=user_embed)
+        else:
+            await ctx.reply(f"❌ No statistics found for {target_user.display_name}.")
+    except Exception as e:
+        print(f"❌ Error in userstats command: {e}")
+        await ctx.reply("❌ Failed to retrieve user statistics.")
+
+@bot.command(name="leaderboard", aliases=["lb", "top"], description="Show various leaderboards")
+async def leaderboard_command(ctx, board_type: str = "help"):
+    """Show different types of leaderboards."""
+    if board_type.lower() == "help":
+        embed = discord.Embed(
+            title="🏆 Available Leaderboards",
+            description="Use `!leaderboard <type>` to view specific leaderboards:",
+            color=0xf39c12
+        )
+        embed.add_field(
+            name="📊 Available Types",
+            value="• `packs` - Top pack openers\n"
+                  "• `time` - Most active users\n"
+                  "• `efficiency` - Best pack efficiency\n"
+                  "• `miss` - Best/worst verifiers\n"
+                  "• `farm` - Top farmers",
+            inline=False
+        )
+        await ctx.reply(embed=embed)
+        return
+    
+    # Implementation would depend on creating specific leaderboard functions
+    await ctx.reply(f"🚧 Leaderboard type '{board_type}' is coming soon!")
+
+# STATUS COMMANDS
+@bot.command(name="status", description="Show bot status and uptime")
+async def status_command(ctx):
+    """Show bot status information."""
+    try:
+        # Calculate uptime
+        uptime = datetime.datetime.now() - bot.start_time if hasattr(bot, 'start_time') else datetime.timedelta(0)
+        
+        # Get basic stats
+        active_users = await get_active_users(True, False)
+        all_users = await get_all_users()
+        
+        embed = discord.Embed(
+            title="🤖 Bot Status",
+            color=0x2ecc71
+        )
+        
+        embed.add_field(
+            name="⏱️ Uptime",
+            value=f"{uptime.days}d {uptime.seconds//3600}h {(uptime.seconds//60)%60}m",
+            inline=True
+        )
+        
+        embed.add_field(
+            name="👥 Users",
+            value=f"Active: {len(active_users)}\nTotal: {len(all_users)}",
+            inline=True
+        )
+        
+        embed.add_field(
+            name="📊 Last Stats",
+            value=last_stats_time.strftime('%H:%M:%S') if last_stats_time else "Never",
+            inline=True
+        )
+        
+        embed.add_field(
+            name="🔄 Tasks",
+            value=f"Stats: {'✅' if stats_sender.is_running() else '❌'}\n"
+                  f"Cleanup: {'✅' if user_cleanup.is_running() else '❌'}",
+            inline=True
+        )
+        
+        embed.set_footer(text=f"Bot ID: {bot.user.id}")
+        await ctx.reply(embed=embed)
+        
+    except Exception as e:
+        print(f"❌ Error in status command: {e}")
+        await ctx.reply("❌ Failed to retrieve bot status.")
+
+# ERROR HANDLERS FOR SPECIFIC COMMANDS
+@force_stats_command.error
+@cleanup_command.error
+@backup_command.error
+@health_command.error
+@emergency_command.error
+@validate_command.error
+async def admin_command_error(ctx, error):
+    """Handle errors for admin commands."""
+    if isinstance(error, commands.MissingPermissions):
+        await ctx.reply("❌ You need administrator permissions to use this command.")
+    else:
+        await ctx.reply("❌ An error occurred while executing the admin command.")
+
+# STARTUP INITIALIZATION
+async def initialize_bot():
+    """Initialize bot data and settings."""
+    try:
+        # Set start time
+        bot.start_time = datetime.datetime.now()
+        
+        # Create necessary directories
+        os.makedirs('data', exist_ok=True)
+        os.makedirs('logs', exist_ok=True)
+        os.makedirs('backups', exist_ok=True)
+        
+        # Start data backup task if configured
+        if hasattr(config, 'enable_auto_backup') and config.enable_auto_backup:
+            if not data_backup.is_running():
+                data_backup.start()
+                print('💾 Data backup task started')
+        
+        print('✅ Bot initialization completed')
+        
+    except Exception as e:
+        print(f'❌ Error during bot initialization: {e}')
+
+# RUN THE BOT
 if __name__ == "__main__":
-    bot.run(config.token)
+    try:
+        # Initialize bot
+        asyncio.run(initialize_bot())
+        
+        # Run the bot
+        bot.run(config.discord_token)
+        
+    except KeyboardInterrupt:
+        print("\n🛑 Bot shutdown requested by user")
+    except Exception as e:
+        print(f"❌ Fatal error: {e}")
+        traceback.print_exc()
+    finally:
+        print("👋 Bot shutdown complete")
