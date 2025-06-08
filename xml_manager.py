@@ -3,6 +3,7 @@ import xml.etree.ElementTree as ET
 import datetime
 import threading
 from typing import List, Dict, Any, Optional, Union, Tuple
+import logging
 
 # Import the path constants
 from config import (
@@ -45,27 +46,11 @@ from config import (
     attrib_rolling_type
 )
 
-# Locks for thread safety
-users_data_lock = threading.Lock()
-server_data_lock = threading.Lock()
+# FIXED: Thread safety improvements - Use context managers for safer locking
+users_data_lock = threading.RLock()  # Use RLock for reentrant locking
+server_data_lock = threading.RLock()  # Use RLock for reentrant locking
 
-def lock_users_data():
-    """Acquire the users data lock."""
-    users_data_lock.acquire()
-
-def unlock_users_data():
-    """Release the users data lock."""
-    if users_data_lock.locked():
-        users_data_lock.release()
-
-def lock_server_data():
-    """Acquire the server data lock."""
-    server_data_lock.acquire()
-
-def unlock_server_data():
-    """Release the server data lock."""
-    if server_data_lock.locked():
-        server_data_lock.release()
+logger = logging.getLogger(__name__)
 
 def clean_string(text: str) -> str:
     """Remove non-alphanumeric characters from a string."""
@@ -91,10 +76,13 @@ def check_file_exists_or_create(path: str, root_element: str = "root") -> bool:
     root = ET.Element(root_element)
     tree = ET.ElementTree(root)
     
-    with open(path, 'wb') as f:
-        tree.write(f, encoding='utf-8', xml_declaration=True)
-        
-    return True
+    try:
+        with open(path, 'wb') as f:
+            tree.write(f, encoding='utf-8', xml_declaration=True)
+        return True
+    except Exception as e:
+        logger.error(f"Error creating XML file {path}: {e}")
+        return False
 
 async def read_file_async(path: str) -> str:
     """Read a file asynchronously."""
@@ -102,7 +90,7 @@ async def read_file_async(path: str) -> str:
         with open(path, 'r', encoding='utf-8') as f:
             return f.read()
     except Exception as e:
-        print(f"❌ Error reading file {path}: {e}")
+        logger.error(f"Error reading file {path}: {e}")
         return ""
 
 def write_file(path: str, content: str) -> bool:
@@ -112,7 +100,7 @@ def write_file(path: str, content: str) -> bool:
             f.write(content)
         return True
     except Exception as e:
-        print(f"❌ Error writing to file {path}: {e}")
+        logger.error(f"Error writing to file {path}: {e}")
         return False
 
 def backup_file(path: str) -> bool:
@@ -127,16 +115,16 @@ def backup_file(path: str) -> bool:
                 dst.write(src.read())
         return True
     except Exception as e:
-        print(f"❌ Error backing up file {path}: {e}")
+        logger.error(f"Error backing up file {path}: {e}")
         return False
 
 async def does_user_profile_exists(user_id: str, username: str) -> bool:
     """Check if a user profile exists in UserData.xml, create if not."""
-    with users_data_lock:
-        if not check_file_exists(path_users_data):
-            check_file_exists_or_create(path_users_data, "Users")
-            
-        try:
+    try:
+        with users_data_lock:
+            if not check_file_exists(path_users_data):
+                check_file_exists_or_create(path_users_data, "Users")
+                
             tree = ET.parse(path_users_data)
             root = tree.getroot()
             
@@ -151,16 +139,16 @@ async def does_user_profile_exists(user_id: str, username: str) -> bool:
             
             tree.write(path_users_data, encoding='utf-8', xml_declaration=True)
             return True
-        except Exception as e:
-            print(f"❌ Error checking user profile: {e}")
-            return False
+    except Exception as e:
+        logger.error(f"Error checking user profile: {e}")
+        return False
 
 async def set_user_attrib_value(user_id: str, username: str, attribute: str, value: Any) -> bool:
     """Set an attribute value for a user."""
-    with users_data_lock:
-        await does_user_profile_exists(user_id, username)
-        
-        try:
+    try:
+        with users_data_lock:
+            await does_user_profile_exists(user_id, username)
+            
             tree = ET.parse(path_users_data)
             root = tree.getroot()
             
@@ -178,17 +166,17 @@ async def set_user_attrib_value(user_id: str, username: str, attribute: str, val
             user.set(attribute, str(value))
             tree.write(path_users_data, encoding='utf-8', xml_declaration=True)
             return True
-        except Exception as e:
-            print(f"❌ Error setting user attribute: {e}")
-            return False
+    except Exception as e:
+        logger.error(f"Error setting user attribute: {e}")
+        return False
 
 async def get_user_attrib_value(user_id: str, attribute: str, default_value: Any = None) -> Any:
     """Get an attribute value for a user."""
-    with users_data_lock:
-        if not check_file_exists(path_users_data):
-            return default_value
-            
-        try:
+    try:
+        with users_data_lock:
+            if not check_file_exists(path_users_data):
+                return default_value
+                
             tree = ET.parse(path_users_data)
             root = tree.getroot()
             
@@ -198,17 +186,17 @@ async def get_user_attrib_value(user_id: str, attribute: str, default_value: Any
                     return value if value is not None else default_value
                     
             return default_value
-        except Exception as e:
-            print(f"❌ Error getting user attribute: {e}")
-            return default_value
+    except Exception as e:
+        logger.error(f"Error getting user attribute: {e}")
+        return default_value
 
 async def set_all_users_attrib_value(attribute: str, value: Any) -> bool:
     """Set an attribute value for all users."""
-    with users_data_lock:
-        if not check_file_exists(path_users_data):
-            return False
-            
-        try:
+    try:
+        with users_data_lock:
+            if not check_file_exists(path_users_data):
+                return False
+                
             tree = ET.parse(path_users_data)
             root = tree.getroot()
             
@@ -217,16 +205,16 @@ async def set_all_users_attrib_value(attribute: str, value: Any) -> bool:
                 
             tree.write(path_users_data, encoding='utf-8', xml_declaration=True)
             return True
-        except Exception as e:
-            print(f"❌ Error setting attribute for all users: {e}")
-            return False
+    except Exception as e:
+        logger.error(f"Error setting attribute for all users: {e}")
+        return False
 
 async def set_user_subsystem_attrib_value(user_id: str, username: str, subsystem_name: str, attribute: str, value: Any) -> bool:
     """Set an attribute value for a user's subsystem."""
-    with users_data_lock:
-        await does_user_profile_exists(user_id, username)
-        
-        try:
+    try:
+        with users_data_lock:
+            await does_user_profile_exists(user_id, username)
+            
             tree = ET.parse(path_users_data)
             root = tree.getroot()
             
@@ -262,17 +250,17 @@ async def set_user_subsystem_attrib_value(user_id: str, username: str, subsystem
             
             tree.write(path_users_data, encoding='utf-8', xml_declaration=True)
             return True
-        except Exception as e:
-            print(f"❌ Error setting user subsystem attribute: {e}")
-            return False
+    except Exception as e:
+        logger.error(f"Error setting user subsystem attribute: {e}")
+        return False
 
 async def get_user_subsystem_attrib_value(user_id: str, subsystem_name: str, attribute: str, default_value: Any = None) -> Any:
     """Get an attribute value for a user's subsystem."""
-    with users_data_lock:
-        if not check_file_exists(path_users_data):
-            return default_value
-            
-        try:
+    try:
+        with users_data_lock:
+            if not check_file_exists(path_users_data):
+                return default_value
+                
             tree = ET.parse(path_users_data)
             root = tree.getroot()
             
@@ -293,9 +281,9 @@ async def get_user_subsystem_attrib_value(user_id: str, subsystem_name: str, att
                     return default_value
             
             return default_value
-        except Exception as e:
-            print(f"❌ Error getting user subsystem attribute: {e}")
-            return default_value
+    except Exception as e:
+        logger.error(f"Error getting user subsystem attribute: {e}")
+        return default_value
 
 async def get_user_subsystems(user_element: ET.Element) -> List[ET.Element]:
     """Get all subsystems for a user."""
@@ -325,11 +313,11 @@ async def get_user_active_subsystems(user_element: ET.Element) -> List[ET.Elemen
 
 async def get_active_users(active_only: bool = True, include_farm: bool = False) -> List[ET.Element]:
     """Get active users from UserData.xml."""
-    with users_data_lock:
-        if not check_file_exists(path_users_data):
-            return []
-            
-        try:
+    try:
+        with users_data_lock:
+            if not check_file_exists(path_users_data):
+                return []
+                
             tree = ET.parse(path_users_data)
             root = tree.getroot()
             
@@ -346,30 +334,34 @@ async def get_active_users(active_only: bool = True, include_farm: bool = False)
                     active_users.append(user)
                     
             return active_users
-        except Exception as e:
-            print(f"❌ Error getting active users: {e}")
-            return []
+    except Exception as e:
+        logger.error(f"Error getting active users: {e}")
+        return []
 
 async def get_active_ids() -> str:
     """Get active user IDs formatted for ids.txt."""
     from config import enable_role_based_filters
     
-    with users_data_lock:
-        active_users = await get_active_users(True, False)
-        
-        id_list = []
-        for user in active_users:
-            pocket_id = user.get(attrib_pocket_id)
-            if pocket_id:
-                selected_pack = user.get(attrib_selected_pack, '')
-                
-                # Format the entry based on whether role-based filters are enabled
-                if enable_role_based_filters and selected_pack:
-                    id_list.append(f"{pocket_id}/{selected_pack}")
-                else:
-                    id_list.append(pocket_id)
-        
-        return '\n'.join(id_list)
+    try:
+        with users_data_lock:
+            active_users = await get_active_users(True, False)
+            
+            id_list = []
+            for user in active_users:
+                pocket_id = user.get(attrib_pocket_id)
+                if pocket_id:
+                    selected_pack = user.get(attrib_selected_pack, '')
+                    
+                    # Format the entry based on whether role-based filters are enabled
+                    if enable_role_based_filters and selected_pack:
+                        id_list.append(f"{pocket_id}/{selected_pack}")
+                    else:
+                        id_list.append(pocket_id)
+            
+            return '\n'.join(id_list)
+    except Exception as e:
+        logger.error(f"Error getting active IDs: {e}")
+        return ""
 
 async def get_all_users() -> List[ET.Element]:
     """Get all users from UserData.xml."""
@@ -442,7 +434,7 @@ async def refresh_user_active_state(user: ET.Element) -> Tuple[str, float]:
         else:
             return 'inactive', inactive_minutes
     except Exception as e:
-        print(f"❌ Error refreshing user active state: {e}")
+        logger.error(f"Error refreshing user active state: {e}")
         return 'inactive', 0
 
 async def refresh_user_real_instances(user: ET.Element, active_state: str) -> int:
@@ -479,11 +471,11 @@ async def refresh_user_real_instances(user: ET.Element, active_state: str) -> in
 
 async def add_server_gp(gp_type: str, forum_post) -> bool:
     """Add a GP to ServerData.xml."""
-    with server_data_lock:
-        if not check_file_exists(path_server_data):
-            check_file_exists_or_create(path_server_data, "root")
-            
-        try:
+    try:
+        with server_data_lock:
+            if not check_file_exists(path_server_data):
+                check_file_exists_or_create(path_server_data, "root")
+                
             tree = ET.parse(path_server_data)
             root = tree.getroot()
             
@@ -501,17 +493,17 @@ async def add_server_gp(gp_type: str, forum_post) -> bool:
             
             tree.write(path_server_data, encoding='utf-8', xml_declaration=True)
             return True
-        except Exception as e:
-            print(f"❌ Error adding server GP: {e}")
-            return False
+    except Exception as e:
+        logger.error(f"Error adding server GP: {e}")
+        return False
 
 async def get_server_data_gps(gp_type: str) -> List[ET.Element]:
     """Get GP data from ServerData.xml."""
-    with server_data_lock:
-        if not check_file_exists(path_server_data):
-            return []
-            
-        try:
+    try:
+        with server_data_lock:
+            if not check_file_exists(path_server_data):
+                return []
+                
             tree = ET.parse(path_server_data)
             root = tree.getroot()
             
@@ -527,6 +519,6 @@ async def get_server_data_gps(gp_type: str) -> List[ET.Element]:
                 gp_items.append(gp)
                 
             return gp_items
-        except Exception as e:
-            print(f"❌ Error getting server data GPs: {e}")
-            return []
+    except Exception as e:
+        logger.error(f"Error getting server data GPs: {e}")
+        return []
