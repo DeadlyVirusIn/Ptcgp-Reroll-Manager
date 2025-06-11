@@ -165,11 +165,10 @@ aiohttp
 apscheduler
 
 Credits
-This is a Python port of the original Node.js bot written by @thobi for the PTCGP Rerollers community. Special thanks to:
+This is a Python port of the original Node.js bot written by @thobi for the PTCGP Rerollers community.
 
-@Arturo-1212 for the PTCG Bot
-@cjlj for Automated ids.txt modifications on the AHK side
-The PTCGP Rerollers community for their support and feedback
+@Arturo-1212 for the PTCG Bot.
+The PTCGP Rerollers community for their support and feedback.
 
 License
 GNU General Public License v3.0
